@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -18,12 +19,18 @@ namespace FrameServerViewer
         private readonly ComboBox _channelBox;
         private readonly ComboBox _resBox;
         private readonly ComboBox _fpsBox;
+        private readonly Button _openVideoBtn;
+        private readonly Button _clearVideoBtn;
         private readonly Button _startBtn;
         private readonly Label _statusLabel;
         private readonly Label _statsLabel;
         private readonly PictureBox _previewBox;
 
         private CancellationTokenSource _cts;
+        private Process _ffmpegProcess;
+        private readonly object _ffmpegLock = new object();
+        private volatile string _videoFilePath;
+        private volatile bool _sourceChanged;
         private Bitmap _currentBitmap;
         private readonly object _bitmapLock = new object();
 
@@ -57,7 +64,7 @@ namespace FrameServerViewer
             _channelBox = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDown,
-                Width = 185,
+                Width = 175,
                 Margin = new Padding(2, 2, 6, 0)
             };
             _channelBox.Items.AddRange(new object[]
@@ -72,7 +79,7 @@ namespace FrameServerViewer
             _resBox = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Width = 92,
+                Width = 86,
                 Margin = new Padding(0, 2, 6, 0)
             };
             _resBox.Items.AddRange(new object[] { "1280x720", "1920x1080", "800x600" });
@@ -81,16 +88,41 @@ namespace FrameServerViewer
             _fpsBox = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Width = 54,
+                Width = 48,
                 Margin = new Padding(0, 2, 6, 0)
             };
             _fpsBox.Items.AddRange(new object[] { "25", "30", "50", "60" });
             _fpsBox.SelectedIndex = 1;
 
+            _openVideoBtn = new Button
+            {
+                Text = "Open Video...",
+                Width = 92,
+                Height = 26,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(65, 65, 78),
+                ForeColor = Color.White,
+                Margin = new Padding(0, 1, 4, 0)
+            };
+            _openVideoBtn.Click += OnOpenVideoClick;
+
+            _clearVideoBtn = new Button
+            {
+                Text = "Test",
+                Width = 48,
+                Height = 26,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(55, 55, 65),
+                ForeColor = Color.LightGray,
+                Enabled = false,
+                Margin = new Padding(0, 1, 6, 0)
+            };
+            _clearVideoBtn.Click += OnClearVideoClick;
+
             _startBtn = new Button
             {
                 Text = "Start Server",
-                Width = 96,
+                Width = 92,
                 Height = 26,
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(35, 134, 54),
@@ -99,7 +131,10 @@ namespace FrameServerViewer
             };
             _startBtn.Click += OnStartClick;
 
-            topPanel.Controls.AddRange(new Control[] { _channelBox, _resBox, _fpsBox, _startBtn });
+            topPanel.Controls.AddRange(new Control[]
+            {
+                _channelBox, _resBox, _fpsBox, _openVideoBtn, _clearVideoBtn, _startBtn
+            });
 
             var statusBar = new Panel
             {
@@ -111,7 +146,7 @@ namespace FrameServerViewer
 
             _statusLabel = new Label
             {
-                Text = "Server stopped.",
+                Text = "Server stopped (Test Pattern ready).",
                 Dock = DockStyle.Left,
                 AutoSize = true,
                 ForeColor = Color.LightGray
@@ -143,6 +178,40 @@ namespace FrameServerViewer
             Controls.Add(statusBar);
         }
 
+        private void OnOpenVideoClick(object sender, EventArgs e)
+        {
+            using var dlg = new OpenFileDialog
+            {
+                Title = "Select Video File for FrameServer Sender",
+                Filter = "Video Files|*.mp4;*.mov;*.mkv;*.avi;*.webm;*.mxf;*.ts;*.wmv|All Files|*.*"
+            };
+
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+            _videoFilePath = dlg.FileName;
+            _sourceChanged = true;
+            _clearVideoBtn.Enabled = true;
+            KillFfmpeg();
+
+            if (_cts == null)
+            {
+                StartFromUi();
+            }
+            else
+            {
+                SetStatus($"Switching to video: {Path.GetFileName(_videoFilePath)}");
+            }
+        }
+
+        private void OnClearVideoClick(object sender, EventArgs e)
+        {
+            _videoFilePath = null;
+            _sourceChanged = true;
+            _clearVideoBtn.Enabled = false;
+            KillFfmpeg();
+            SetStatus(_cts != null ? "Switched to Test Pattern." : "Server stopped (Test Pattern ready).");
+        }
+
         private void OnStartClick(object sender, EventArgs e)
         {
             if (_cts != null)
@@ -150,7 +219,11 @@ namespace FrameServerViewer
                 StopServer();
                 return;
             }
+            StartFromUi();
+        }
 
+        private void StartFromUi()
+        {
             string channel = _channelBox.Text?.Trim();
             if (string.IsNullOrEmpty(channel)) channel = "FrameServer R3 output (2)";
 
@@ -170,7 +243,11 @@ namespace FrameServerViewer
             _fpsBox.Enabled = false;
             _startBtn.Text = "Stop Server";
             _startBtn.BackColor = Color.FromArgb(180, 48, 48);
-            SetStatus($"Serving '{channel}' ({width}x{height} @ {fps}fps)...");
+
+            string srcLabel = string.IsNullOrEmpty(_videoFilePath)
+                ? "Test Pattern"
+                : Path.GetFileName(_videoFilePath);
+            SetStatus($"Serving '{channel}' ({width}x{height} @ {fps}fps) [{srcLabel}]");
 
             var token = _cts.Token;
             Task.Run(() => ServerLoop(channel, width, height, fps, token), token);
@@ -185,6 +262,8 @@ namespace FrameServerViewer
                 _cts = null;
             }
 
+            KillFfmpeg();
+
             if (!IsDisposed && IsHandleCreated)
             {
                 BeginInvoke((Action)(() =>
@@ -196,6 +275,23 @@ namespace FrameServerViewer
                     _startBtn.BackColor = Color.FromArgb(35, 134, 54);
                     SetStatus("Server stopped.");
                 }));
+            }
+        }
+
+        private void KillFfmpeg()
+        {
+            lock (_ffmpegLock)
+            {
+                if (_ffmpegProcess != null)
+                {
+                    try
+                    {
+                        if (!_ffmpegProcess.HasExited) _ffmpegProcess.Kill();
+                    }
+                    catch { }
+                    try { _ffmpegProcess.Dispose(); } catch { }
+                    _ffmpegProcess = null;
+                }
             }
         }
 
@@ -234,55 +330,31 @@ namespace FrameServerViewer
 
                 while (!token.IsCancellationRequested)
                 {
-                    var frameStart = Stopwatch.StartNew();
+                    _sourceChanged = false;
+                    string videoPath = _videoFilePath;
 
-                    using (var bmp = RenderTestFrame(width, height, totalSent, ref ballX, ref ballY, ref vx, ref vy))
+                    if (!string.IsNullOrEmpty(videoPath))
                     {
-                        var rect = new Rectangle(0, 0, width, height);
-                        var data = bmp.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
-                        try
-                        {
-                            Marshal.Copy(data.Scan0, managedBuffer, 0, byteCount);
-                        }
-                        finally
-                        {
-                            bmp.UnlockBits(data);
-                        }
-
-                        Marshal.Copy(managedBuffer, 0, unmanagedBuffer, byteCount);
-
-                        // Publish into shared memory when receiver requests or every frame for live test
-                        creator.GetVideoFeed(true);
-                        creator.WriteOnImageBuffer(unmanagedBuffer, byteCount);
-
-                        var previewCopy = new Bitmap(bmp);
-                        Bitmap old;
-                        lock (_bitmapLock)
-                        {
-                            old = _currentBitmap;
-                            _currentBitmap = previewCopy;
-                        }
-                        old?.Dispose();
+                        RunVideoStream(videoPath, width, height, fps, byteCount, managedBuffer, unmanagedBuffer,
+                            creator, ref totalSent, ref fpsCounter, fpsWatch, token);
                     }
-
-                    totalSent++;
-                    fpsCounter++;
-
-                    if (!IsDisposed && IsHandleCreated)
+                    else
                     {
-                        BeginInvoke((Action)(() => _previewBox.Invalidate()));
-                    }
+                        var frameStart = Stopwatch.StartNew();
+                        using (var bmp = RenderTestFrame(width, height, totalSent, ref ballX, ref ballY, ref vx, ref vy))
+                        {
+                            CopyBitmapToBuffer(bmp, width, height, managedBuffer, byteCount);
+                            PublishFrame(creator, unmanagedBuffer, managedBuffer, byteCount);
+                            SetPreviewBitmap(new Bitmap(bmp));
+                        }
 
-                    if (fpsWatch.ElapsedMilliseconds >= 1000)
-                    {
-                        double actualFps = fpsCounter * 1000.0 / fpsWatch.ElapsedMilliseconds;
-                        fpsCounter = 0;
-                        fpsWatch.Restart();
-                        UpdateStats($"{width}x{height} | {actualFps:F1} fps | {totalSent} sent");
-                    }
+                        totalSent++;
+                        fpsCounter++;
+                        MaybeUpdateStats(width, height, ref fpsCounter, fpsWatch, totalSent);
 
-                    int sleep = frameIntervalMs - (int)frameStart.ElapsedMilliseconds;
-                    if (sleep > 0) Thread.Sleep(sleep);
+                        int sleep = frameIntervalMs - (int)frameStart.ElapsedMilliseconds;
+                        if (sleep > 0) Thread.Sleep(sleep);
+                    }
                 }
             }
             catch (Exception ex)
@@ -294,8 +366,152 @@ namespace FrameServerViewer
             }
             finally
             {
+                KillFfmpeg();
                 if (unmanagedBuffer != IntPtr.Zero) Marshal.FreeHGlobal(unmanagedBuffer);
                 try { creator?.Dispose(); } catch { }
+            }
+        }
+
+        private void RunVideoStream(
+            string videoPath,
+            short width,
+            short height,
+            short fps,
+            int byteCount,
+            byte[] managedBuffer,
+            IntPtr unmanagedBuffer,
+            FrameCreatorMemInstance creator,
+            ref long totalSent,
+            ref int fpsCounter,
+            Stopwatch fpsWatch,
+            CancellationToken token)
+        {
+            string args = $"-re -stream_loop -1 -i \"{videoPath}\" " +
+                          $"-vf \"scale={width}:{height}:force_original_aspect_ratio=decrease," +
+                          $"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black@0\" " +
+                          $"-r {fps} -pix_fmt bgra -f rawvideo -";
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                Arguments = args,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            Process proc;
+            try
+            {
+                proc = Process.Start(psi);
+                lock (_ffmpegLock)
+                {
+                    _ffmpegProcess = proc;
+                }
+                proc.BeginErrorReadLine();
+            }
+            catch (Exception ex)
+            {
+                SetStatus($"Failed to start ffmpeg: {ex.Message}");
+                _videoFilePath = null;
+                return;
+            }
+
+            SetStatus($"Playing: {Path.GetFileName(videoPath)} ({width}x{height} @ {fps}fps)");
+            Stream stdout = proc.StandardOutput.BaseStream;
+
+            while (!token.IsCancellationRequested && !_sourceChanged)
+            {
+                if (!ReadExact(stdout, managedBuffer, byteCount))
+                {
+                    break;
+                }
+
+                PublishFrame(creator, unmanagedBuffer, managedBuffer, byteCount);
+                SetPreviewBitmap(BitmapFromBgra(width, height, managedBuffer));
+
+                totalSent++;
+                fpsCounter++;
+                MaybeUpdateStats(width, height, ref fpsCounter, fpsWatch, totalSent);
+            }
+
+            KillFfmpeg();
+        }
+
+        private static bool ReadExact(Stream stream, byte[] buffer, int count)
+        {
+            int offset = 0;
+            while (offset < count)
+            {
+                int read = stream.Read(buffer, offset, count - offset);
+                if (read <= 0) return false;
+                offset += read;
+            }
+            return true;
+        }
+
+        private static void CopyBitmapToBuffer(Bitmap bmp, int width, int height, byte[] buffer, int byteCount)
+        {
+            var rect = new Rectangle(0, 0, width, height);
+            var data = bmp.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                Marshal.Copy(data.Scan0, buffer, 0, byteCount);
+            }
+            finally
+            {
+                bmp.UnlockBits(data);
+            }
+        }
+
+        private static Bitmap BitmapFromBgra(int width, int height, byte[] bgraBytes)
+        {
+            var bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+            var rect = new Rectangle(0, 0, width, height);
+            var data = bmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                Marshal.Copy(bgraBytes, 0, data.Scan0, bgraBytes.Length);
+            }
+            finally
+            {
+                bmp.UnlockBits(data);
+            }
+            return bmp;
+        }
+
+        private static void PublishFrame(FrameCreatorMemInstance creator, IntPtr unmanagedBuffer, byte[] managedBuffer, int byteCount)
+        {
+            Marshal.Copy(managedBuffer, 0, unmanagedBuffer, byteCount);
+            creator.GetVideoFeed(true);
+            creator.WriteOnImageBuffer(unmanagedBuffer, byteCount);
+        }
+
+        private void SetPreviewBitmap(Bitmap bmp)
+        {
+            Bitmap old;
+            lock (_bitmapLock)
+            {
+                old = _currentBitmap;
+                _currentBitmap = bmp;
+            }
+            old?.Dispose();
+
+            if (!IsDisposed && IsHandleCreated)
+            {
+                BeginInvoke((Action)(() => _previewBox.Invalidate()));
+            }
+        }
+
+        private void MaybeUpdateStats(short width, short height, ref int fpsCounter, Stopwatch fpsWatch, long totalSent)
+        {
+            if (fpsWatch.ElapsedMilliseconds >= 1000)
+            {
+                double actualFps = fpsCounter * 1000.0 / fpsWatch.ElapsedMilliseconds;
+                fpsCounter = 0;
+                fpsWatch.Restart();
+                UpdateStats($"{width}x{height} | {actualFps:F1} fps | {totalSent} sent");
             }
         }
 
@@ -307,7 +523,6 @@ namespace FrameServerViewer
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.Clear(Color.Transparent);
 
-                // Bouncing ball with alpha
                 int radius = Math.Max(24, height / 16);
                 bx += vx;
                 by += vy;
@@ -321,7 +536,6 @@ namespace FrameServerViewer
                     g.DrawEllipse(ballPen, bx - radius, by - radius, radius * 2, radius * 2);
                 }
 
-                // Broadcast-style lower-third bar with transparency
                 int barH = Math.Max(64, height / 9);
                 int barY = height - barH - (height / 14);
                 int barX = width / 16;
@@ -384,4 +598,3 @@ namespace FrameServerViewer
         }
     }
 }
-

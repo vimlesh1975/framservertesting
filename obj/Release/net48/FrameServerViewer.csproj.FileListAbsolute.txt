@@ -13,3 +13,4 @@ d:\___newp\framservertesting\obj\Release\net48\FrameSer.02C011BF.Up2Date
 d:\___newp\framservertesting\obj\Release\net48\FrameServerViewer.exe
 d:\___newp\framservertesting\obj\Release\net48\FrameServerViewer.pdb
 d:\___newp\framservertesting\bin\Release\net48\wTVision.Memory.dll
+d:\___newp\framservertesting\obj\Release\net48\FrameServerViewer.sourcelink.json
