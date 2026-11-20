@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <PlatformTarget>x64</PlatformTarget>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Wtvision.Video.Tools.DataShare">
+      <HintPath>C:\Program Files\wTVision\BroadcastBoards\2.30\Wtvision.Video.Tools.DataShare.dll</HintPath>
+    </Reference>
+    <Reference Include="Wtvision.Video.Tools.SharedMemory">
+      <HintPath>C:\Program Files\wTVision\BroadcastBoards\2.30\Wtvision.Video.Tools.SharedMemory.dll</HintPath>
+    </Reference>
+    <Reference Include="Wtvision.IPCNamedPipes">
+      <HintPath>C:\Program Files\wTVision\BroadcastBoards\2.30\Wtvision.IPCNamedPipes.dll</HintPath>
+    </Reference>
+    <Reference Include="wTVision.Memory">
+      <HintPath>C:\Program Files\wTVision\BroadcastBoards\2.30\wTVision.Memory.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>
+

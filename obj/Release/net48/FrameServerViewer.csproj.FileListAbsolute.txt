@@ -1,0 +1,15 @@
+d:\___newp\framservertesting\obj\Release\net48\FrameServerViewer.csproj.AssemblyReference.cache
+d:\___newp\framservertesting\obj\Release\net48\FrameServerViewer.GeneratedMSBuildEditorConfig.editorconfig
+d:\___newp\framservertesting\obj\Release\net48\FrameServerViewer.AssemblyInfoInputs.cache
+d:\___newp\framservertesting\obj\Release\net48\FrameServerViewer.AssemblyInfo.cs
+d:\___newp\framservertesting\obj\Release\net48\FrameServerViewer.csproj.CoreCompileInputs.cache
+d:\___newp\framservertesting\bin\Release\net48\FrameServerViewer.exe.config
+d:\___newp\framservertesting\bin\Release\net48\FrameServerViewer.exe
+d:\___newp\framservertesting\bin\Release\net48\FrameServerViewer.pdb
+d:\___newp\framservertesting\bin\Release\net48\Wtvision.IPCNamedPipes.dll
+d:\___newp\framservertesting\bin\Release\net48\Wtvision.Video.Tools.DataShare.dll
+d:\___newp\framservertesting\bin\Release\net48\Wtvision.Video.Tools.SharedMemory.dll
+d:\___newp\framservertesting\obj\Release\net48\FrameSer.02C011BF.Up2Date
+d:\___newp\framservertesting\obj\Release\net48\FrameServerViewer.exe
+d:\___newp\framservertesting\obj\Release\net48\FrameServerViewer.pdb
+d:\___newp\framservertesting\bin\Release\net48\wTVision.Memory.dll
