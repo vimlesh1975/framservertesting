@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("FrameServerViewer")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+5ce65f7094b658e8a13ed6803b5b414513523302")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+3ea04a18e4e7460853a759d5d2319364f0c8d7df")]
 [assembly: System.Reflection.AssemblyProductAttribute("FrameServerViewer")]
 [assembly: System.Reflection.AssemblyTitleAttribute("FrameServerViewer")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

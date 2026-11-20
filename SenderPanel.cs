@@ -540,7 +540,10 @@ namespace FrameServerViewer
                                 DefaultBackgroundColor = Color.Transparent
                             };
                             Controls.Add(_webView);
-                            await _webView.EnsureCoreWebView2Async();
+                            var env = await CoreWebView2Environment.CreateAsync(
+                                null,
+                                Path.Combine(Path.GetTempPath(), "FrameServerViewer_WebView2"));
+                            await _webView.EnsureCoreWebView2Async(env);
                         }
 
                         _webView.CoreWebView2.Navigate(new Uri(htmlPath).AbsoluteUri);
