@@ -14,3 +14,8 @@ d:\___newp\framservertesting\obj\Release\net48\FrameServerViewer.exe
 d:\___newp\framservertesting\obj\Release\net48\FrameServerViewer.pdb
 d:\___newp\framservertesting\bin\Release\net48\wTVision.Memory.dll
 d:\___newp\framservertesting\obj\Release\net48\FrameServerViewer.sourcelink.json
+d:\___newp\framservertesting\bin\Release\net48\runtimes\win-x64\native\WebView2Loader.dll
+d:\___newp\framservertesting\bin\Release\net48\Microsoft.Web.WebView2.Core.dll
+d:\___newp\framservertesting\bin\Release\net48\Microsoft.Web.WebView2.WinForms.dll
+d:\___newp\framservertesting\bin\Release\net48\Microsoft.Web.WebView2.Wpf.dll
+d:\___newp\framservertesting\bin\Release\net48\WebView2Loader.dll

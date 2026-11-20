@@ -10,16 +10,21 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using IPCNamedPipes;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.WinForms;
 using Wtvision.DataShare;
 
 namespace FrameServerViewer
 {
     public class SenderPanel : UserControl, IIPCEventsCallback
     {
+        private enum SourceKind { TestPattern, Video, Html }
+
         private readonly ComboBox _channelBox;
         private readonly ComboBox _resBox;
         private readonly ComboBox _fpsBox;
         private readonly Button _openVideoBtn;
+        private readonly Button _openHtmlBtn;
         private readonly Button _clearVideoBtn;
         private readonly Button _startBtn;
         private readonly Label _statusLabel;
@@ -29,7 +34,9 @@ namespace FrameServerViewer
         private CancellationTokenSource _cts;
         private Process _ffmpegProcess;
         private readonly object _ffmpegLock = new object();
-        private volatile string _videoFilePath;
+        private WebView2 _webView;
+        private volatile SourceKind _sourceKind = SourceKind.TestPattern;
+        private volatile string _sourcePath;
         private volatile bool _sourceChanged;
         private Bitmap _currentBitmap;
         private readonly object _bitmapLock = new object();
@@ -96,8 +103,8 @@ namespace FrameServerViewer
 
             _openVideoBtn = new Button
             {
-                Text = "Open Video...",
-                Width = 92,
+                Text = "Video...",
+                Width = 66,
                 Height = 26,
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(65, 65, 78),
@@ -106,10 +113,22 @@ namespace FrameServerViewer
             };
             _openVideoBtn.Click += OnOpenVideoClick;
 
+            _openHtmlBtn = new Button
+            {
+                Text = "HTML...",
+                Width = 66,
+                Height = 26,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(65, 65, 78),
+                ForeColor = Color.White,
+                Margin = new Padding(0, 1, 4, 0)
+            };
+            _openHtmlBtn.Click += OnOpenHtmlClick;
+
             _clearVideoBtn = new Button
             {
                 Text = "Test",
-                Width = 48,
+                Width = 46,
                 Height = 26,
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(55, 55, 65),
@@ -122,7 +141,7 @@ namespace FrameServerViewer
             _startBtn = new Button
             {
                 Text = "Start Server",
-                Width = 92,
+                Width = 88,
                 Height = 26,
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(35, 134, 54),
@@ -133,7 +152,7 @@ namespace FrameServerViewer
 
             topPanel.Controls.AddRange(new Control[]
             {
-                _channelBox, _resBox, _fpsBox, _openVideoBtn, _clearVideoBtn, _startBtn
+                _channelBox, _resBox, _fpsBox, _openVideoBtn, _openHtmlBtn, _clearVideoBtn, _startBtn
             });
 
             var statusBar = new Panel
@@ -188,27 +207,46 @@ namespace FrameServerViewer
 
             if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
-            _videoFilePath = dlg.FileName;
+            _sourceKind = SourceKind.Video;
+            _sourcePath = dlg.FileName;
             _sourceChanged = true;
             _clearVideoBtn.Enabled = true;
             KillFfmpeg();
+            DisposeWebView();
 
-            if (_cts == null)
+            if (_cts == null) StartFromUi();
+            else SetStatus($"Switching to video: {Path.GetFileName(_sourcePath)}");
+        }
+
+        private void OnOpenHtmlClick(object sender, EventArgs e)
+        {
+            using var dlg = new OpenFileDialog
             {
-                StartFromUi();
-            }
-            else
-            {
-                SetStatus($"Switching to video: {Path.GetFileName(_videoFilePath)}");
-            }
+                Title = "Select HTML File for FrameServer Sender",
+                Filter = "HTML Files|*.html;*.htm|All Files|*.*"
+            };
+
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+            _sourceKind = SourceKind.Html;
+            _sourcePath = dlg.FileName;
+            _sourceChanged = true;
+            _clearVideoBtn.Enabled = true;
+            KillFfmpeg();
+            DisposeWebView();
+
+            if (_cts == null) StartFromUi();
+            else SetStatus($"Switching to HTML: {Path.GetFileName(_sourcePath)}");
         }
 
         private void OnClearVideoClick(object sender, EventArgs e)
         {
-            _videoFilePath = null;
+            _sourceKind = SourceKind.TestPattern;
+            _sourcePath = null;
             _sourceChanged = true;
             _clearVideoBtn.Enabled = false;
             KillFfmpeg();
+            DisposeWebView();
             SetStatus(_cts != null ? "Switched to Test Pattern." : "Server stopped (Test Pattern ready).");
         }
 
@@ -244,9 +282,9 @@ namespace FrameServerViewer
             _startBtn.Text = "Stop Server";
             _startBtn.BackColor = Color.FromArgb(180, 48, 48);
 
-            string srcLabel = string.IsNullOrEmpty(_videoFilePath)
+            string srcLabel = _sourceKind == SourceKind.TestPattern || string.IsNullOrEmpty(_sourcePath)
                 ? "Test Pattern"
-                : Path.GetFileName(_videoFilePath);
+                : Path.GetFileName(_sourcePath);
             SetStatus($"Serving '{channel}' ({width}x{height} @ {fps}fps) [{srcLabel}]");
 
             var token = _cts.Token;
@@ -263,6 +301,7 @@ namespace FrameServerViewer
             }
 
             KillFfmpeg();
+            DisposeWebView();
 
             if (!IsDisposed && IsHandleCreated)
             {
@@ -331,11 +370,17 @@ namespace FrameServerViewer
                 while (!token.IsCancellationRequested)
                 {
                     _sourceChanged = false;
-                    string videoPath = _videoFilePath;
+                    var kind = _sourceKind;
+                    string path = _sourcePath;
 
-                    if (!string.IsNullOrEmpty(videoPath))
+                    if (kind == SourceKind.Video && !string.IsNullOrEmpty(path))
                     {
-                        RunVideoStream(videoPath, width, height, fps, byteCount, managedBuffer, unmanagedBuffer,
+                        RunVideoStream(path, width, height, fps, byteCount, managedBuffer, unmanagedBuffer,
+                            creator, ref totalSent, ref fpsCounter, fpsWatch, token);
+                    }
+                    else if (kind == SourceKind.Html && !string.IsNullOrEmpty(path))
+                    {
+                        RunHtmlStream(path, width, height, fps, byteCount, managedBuffer, unmanagedBuffer,
                             creator, ref totalSent, ref fpsCounter, fpsWatch, token);
                     }
                     else
@@ -367,6 +412,7 @@ namespace FrameServerViewer
             finally
             {
                 KillFfmpeg();
+            DisposeWebView();
                 if (unmanagedBuffer != IntPtr.Zero) Marshal.FreeHGlobal(unmanagedBuffer);
                 try { creator?.Dispose(); } catch { }
             }
@@ -414,7 +460,8 @@ namespace FrameServerViewer
             catch (Exception ex)
             {
                 SetStatus($"Failed to start ffmpeg: {ex.Message}");
-                _videoFilePath = null;
+                _sourceKind = SourceKind.TestPattern;
+                _sourcePath = null;
                 return;
             }
 
@@ -437,6 +484,140 @@ namespace FrameServerViewer
             }
 
             KillFfmpeg();
+        }
+
+        private void DisposeWebView()
+        {
+            if (IsDisposed || !IsHandleCreated) return;
+            try
+            {
+                Invoke((Action)(() =>
+                {
+                    if (_webView != null)
+                    {
+                        Controls.Remove(_webView);
+                        _webView.Dispose();
+                        _webView = null;
+                    }
+                }));
+            }
+            catch { }
+        }
+
+        private void RunHtmlStream(
+            string htmlPath,
+            short width,
+            short height,
+            short fps,
+            int byteCount,
+            byte[] managedBuffer,
+            IntPtr unmanagedBuffer,
+            FrameCreatorMemInstance creator,
+            ref long totalSent,
+            ref int fpsCounter,
+            Stopwatch fpsWatch,
+            CancellationToken token)
+        {
+            try
+            {
+                var readyTcs = new TaskCompletionSource<bool>();
+                BeginInvoke((Action)(async () =>
+                {
+                    try
+                    {
+                        if (_webView == null || _webView.Width != width || _webView.Height != height)
+                        {
+                            if (_webView != null)
+                            {
+                                Controls.Remove(_webView);
+                                _webView.Dispose();
+                            }
+                            _webView = new WebView2
+                            {
+                                Width = width,
+                                Height = height,
+                                Location = new Point(-width - 100, 0),
+                                DefaultBackgroundColor = Color.Transparent
+                            };
+                            Controls.Add(_webView);
+                            await _webView.EnsureCoreWebView2Async();
+                        }
+
+                        _webView.CoreWebView2.Navigate(new Uri(htmlPath).AbsoluteUri);
+                        readyTcs.TrySetResult(true);
+                    }
+                    catch (Exception ex)
+                    {
+                        readyTcs.TrySetException(ex);
+                    }
+                }));
+
+                readyTcs.Task.Wait(token);
+            }
+            catch (Exception ex)
+            {
+                if (!token.IsCancellationRequested)
+                {
+                    SetStatus($"HTML init error: {ex.Message}");
+                    _sourceKind = SourceKind.TestPattern;
+                    _sourcePath = null;
+                }
+                return;
+            }
+
+            SetStatus($"HTML: {Path.GetFileName(htmlPath)} ({width}x{height})");
+            int frameIntervalMs = Math.Max(1, 1000 / fps);
+
+            while (!token.IsCancellationRequested && !_sourceChanged)
+            {
+                var frameStart = Stopwatch.StartNew();
+                try
+                {
+                    var captureTcs = new TaskCompletionSource<byte[]>();
+                    BeginInvoke((Action)(async () =>
+                    {
+                        try
+                        {
+                            if (_webView?.CoreWebView2 == null)
+                            {
+                                captureTcs.TrySetResult(null);
+                                return;
+                            }
+                            using var ms = new MemoryStream();
+                            await _webView.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, ms);
+                            captureTcs.TrySetResult(ms.ToArray());
+                        }
+                        catch
+                        {
+                            captureTcs.TrySetResult(null);
+                        }
+                    }));
+
+                    byte[] pngBytes = captureTcs.Task.Result;
+                    if (pngBytes != null && pngBytes.Length > 0)
+                    {
+                        using var ms = new MemoryStream(pngBytes);
+                        using var raw = new Bitmap(ms);
+                        using var bmp = raw.PixelFormat == PixelFormat.Format32bppArgb && raw.Width == width && raw.Height == height
+                            ? new Bitmap(raw)
+                            : new Bitmap(raw, width, height);
+
+                        CopyBitmapToBuffer(bmp, width, height, managedBuffer, byteCount);
+                        PublishFrame(creator, unmanagedBuffer, managedBuffer, byteCount);
+                        SetPreviewBitmap(new Bitmap(bmp));
+
+                        totalSent++;
+                        fpsCounter++;
+                        MaybeUpdateStats(width, height, ref fpsCounter, fpsWatch, totalSent);
+                    }
+                }
+                catch { }
+
+                int sleep = frameIntervalMs - (int)frameStart.ElapsedMilliseconds;
+                if (sleep > 0) Thread.Sleep(sleep);
+            }
+
+            DisposeWebView();
         }
 
         private static bool ReadExact(Stream stream, byte[] buffer, int count)

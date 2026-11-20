@@ -9,6 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="Wtvision.Video.Tools.DataShare">
       <HintPath>C:\Program Files\wTVision\BroadcastBoards\2.30\Wtvision.Video.Tools.DataShare.dll</HintPath>
     </Reference>
